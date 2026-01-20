@@ -8358,6 +8358,11 @@
             "default": "ctrl+d",
             "type": "string"
           },
+          "session_context": {
+            "description": "Show session context",
+            "default": "none",
+            "type": "string"
+          },
           "stash_delete": {
             "description": "Delete stash entry",
             "default": "ctrl+d",

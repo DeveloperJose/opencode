@@ -2,6 +2,9 @@ import os from "os"
 import { Installation } from "@/installation"
 import { Provider } from "@/provider/provider"
 import { Log } from "@/util/log"
+import { Bus } from "@/bus"
+import { BusEvent } from "@/bus/bus-event"
+import z from "zod"
 import {
   streamText,
   wrapLanguageModel,
@@ -12,6 +15,7 @@ import {
   extractReasoningMiddleware,
   tool,
   jsonSchema,
+  type LanguageModelUsage,
 } from "ai"
 import { clone, mergeDeep, pipe } from "remeda"
 import { ProviderTransform } from "@/provider/transform"
@@ -27,6 +31,22 @@ import { Auth } from "@/auth"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
+
+  export const MessageExchangeAfterEvent = BusEvent.define(
+    "message.exchange.after",
+    z.object({
+      sessionID: z.string(),
+      messageID: z.string(),
+      usage: z.custom<LanguageModelUsage>(),
+      request: z.object({
+        body: z.record(z.string(), z.any()).nullable(),
+      }),
+      response: z.object({
+        body: z.record(z.string(), z.any()).nullable(),
+      }),
+      finishReason: z.string().nullable(),
+    }),
+  )
 
   export const OUTPUT_TOKEN_MAX = Flag.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
 
@@ -252,6 +272,20 @@ export namespace LLM {
         ],
       }),
       experimental_telemetry: { isEnabled: cfg.experimental?.openTelemetry },
+      onFinish: async (event) => {
+        Bus.publish(MessageExchangeAfterEvent, {
+          sessionID: input.sessionID,
+          messageID: input.user.id,
+          usage: event.usage,
+          request: {
+            body: (event.request?.body as Record<string, any> | null) ?? null,
+          },
+          response: {
+            body: (event.response?.body as Record<string, any> | null) ?? null,
+          },
+          finishReason: event.finishReason ?? null,
+        })
+      },
     })
   }
 
