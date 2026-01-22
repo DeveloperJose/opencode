@@ -7184,6 +7184,110 @@
         },
         "required": ["type", "properties"]
       },
+      "Event.message.exchange.after": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "message.exchange.after"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string"
+              },
+              "messageID": {
+                "type": "string"
+              },
+              "messageOrigin": {
+                "type": "string",
+                "enum": ["response", "generate_title", "summarize_session", "summarize_message"]
+              },
+              "request": {
+                "type": "object",
+                "properties": {
+                  "body": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": ["body"]
+              },
+              "response": {
+                "type": "object",
+                "properties": {
+                  "body": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "usage": {
+                    "type": "object",
+                    "properties": {
+                      "inputTokens": {
+                        "type": "number"
+                      },
+                      "outputTokens": {
+                        "type": "number"
+                      },
+                      "totalTokens": {
+                        "type": "number"
+                      },
+                      "reasoningTokens": {
+                        "type": "number"
+                      },
+                      "cache": {
+                        "type": "object",
+                        "properties": {
+                          "readTokens": {
+                            "type": "number"
+                          },
+                          "writeTokens": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "finishReason": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": ["body", "usage", "finishReason"]
+              }
+            },
+            "required": ["sessionID", "messageID", "messageOrigin", "request", "response"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
       "SessionStatus": {
         "anyOf": [
           {
@@ -8145,6 +8249,9 @@
             "$ref": "#/components/schemas/Event.permission.replied"
           },
           {
+            "$ref": "#/components/schemas/Event.message.exchange.after"
+          },
+          {
             "$ref": "#/components/schemas/Event.session.status"
           },
           {
@@ -8356,11 +8463,6 @@
           "session_delete": {
             "description": "Delete session",
             "default": "ctrl+d",
-            "type": "string"
-          },
-          "session_context": {
-            "description": "Show session context",
-            "default": "none",
             "type": "string"
           },
           "stash_delete": {

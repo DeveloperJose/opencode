@@ -17,6 +17,7 @@ import type {
   ProviderListResponse,
   ProviderAuthMethod,
   VcsInfo,
+  EventMessageExchangeAfter,
 } from "@opencode-ai/sdk/v2"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { useSDK } from "@tui/context/sdk"
@@ -63,6 +64,9 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       part: {
         [messageID: string]: Part[]
       }
+      session_context: {
+        [sessionID: string]: EventMessageExchangeAfter["properties"][]
+      }
       lsp: LspStatus[]
       mcp: {
         [key: string]: McpStatus
@@ -94,6 +98,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       todo: {},
       message: {},
       part: {},
+      session_context: {},
       lsp: [],
       mcp: {},
       mcp_resource: {},
@@ -310,6 +315,38 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
                 draft.splice(result.index, 1)
               }),
             )
+          break
+        }
+
+        case "message.exchange.after": {
+          const props = event.properties as EventMessageExchangeAfter["properties"]
+          const { sessionID, messageID, messageOrigin, request, response } = props
+          const body = request.body as Record<string, any>
+          const model = body?.model || "Unknown"
+          const usage = response?.usage
+          const finishReason = response?.finishReason
+
+          const contentHash = Bun.hash(JSON.stringify(body)).toString(16)
+
+          const existing = store.session_context[sessionID] ?? []
+          const exists = existing.find(
+            (e) => e.messageID === messageID && e.messageOrigin === messageOrigin && (e as any).contentHash === contentHash,
+          )
+          if (exists) break
+
+          const newExchange = {
+            sessionID,
+            messageID,
+            messageOrigin,
+            contentHash,
+            request,
+            response: {
+              body: response?.body ?? null,
+              usage,
+              finishReason,
+            },
+          } as any
+          setStore("session_context", sessionID, [...existing, newExchange])
           break
         }
 

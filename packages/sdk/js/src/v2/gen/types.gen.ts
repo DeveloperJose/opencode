@@ -500,6 +500,36 @@ export type EventPermissionReplied = {
   }
 }
 
+export type EventMessageExchangeAfter = {
+  type: "message.exchange.after"
+  properties: {
+    sessionID: string
+    messageID: string
+    messageOrigin: "response" | "generate_title" | "summarize_session" | "summarize_message"
+    request: {
+      body: {
+        [key: string]: unknown
+      } | null
+    }
+    response: {
+      body: {
+        [key: string]: unknown
+      } | null
+      usage: {
+        inputTokens?: number
+        outputTokens?: number
+        totalTokens?: number
+        reasoningTokens?: number
+        cache?: {
+          readTokens?: number
+          writeTokens?: number
+        }
+      }
+      finishReason: string | null
+    }
+  }
+}
+
 export type SessionStatus =
   | {
       type: "idle"
@@ -874,6 +904,7 @@ export type Event =
   | EventMessagePartRemoved
   | EventPermissionAsked
   | EventPermissionReplied
+  | EventMessageExchangeAfter
   | EventSessionStatus
   | EventSessionIdle
   | EventQuestionAsked

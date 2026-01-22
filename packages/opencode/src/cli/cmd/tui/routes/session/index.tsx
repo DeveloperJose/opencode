@@ -57,6 +57,7 @@ import { DialogConfirm } from "@tui/ui/dialog-confirm"
 import { DialogTimeline } from "./dialog-timeline"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
+import { DialogContext } from "./dialog-context"
 import { Sidebar } from "./sidebar"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import parsers from "../../../../../../parsers-config.ts"
@@ -402,6 +403,17 @@ export function Session() {
           providerID: selectedModel.providerID,
         })
         dialog.clear()
+      },
+    },
+    {
+      title: "View session context",
+      value: "session.context",
+      category: "Session",
+      slash: {
+        name: "context",
+      },
+      onSelect: (dialog) => {
+        dialog.replace(() => <DialogContext sessionID={route.sessionID} />)
       },
     },
     {

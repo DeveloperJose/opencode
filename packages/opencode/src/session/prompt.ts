@@ -1786,6 +1786,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       abort: new AbortController().signal,
       sessionID: input.session.id,
       retries: 2,
+      messageOrigin: "generate_title",
       messages: [
         {
           role: "user",

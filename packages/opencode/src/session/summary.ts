@@ -87,6 +87,7 @@ export namespace SessionSummary {
           : ((await Provider.getSmallModel(userMsg.model.providerID)) ??
             (await Provider.getModel(userMsg.model.providerID, userMsg.model.modelID))),
         small: true,
+        messageOrigin: "summarize_message",
         messages: [
           {
             role: "user" as const,

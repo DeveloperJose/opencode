@@ -15,7 +15,6 @@ import {
   extractReasoningMiddleware,
   tool,
   jsonSchema,
-  type LanguageModelUsage,
 } from "ai"
 import { clone, mergeDeep, pipe } from "remeda"
 import { ProviderTransform } from "@/provider/transform"
@@ -37,14 +36,26 @@ export namespace LLM {
     z.object({
       sessionID: z.string(),
       messageID: z.string(),
-      usage: z.custom<LanguageModelUsage>(),
+      messageOrigin: z.enum(["response", "generate_title", "summarize_session", "summarize_message"]),
       request: z.object({
         body: z.record(z.string(), z.any()).nullable(),
       }),
       response: z.object({
         body: z.record(z.string(), z.any()).nullable(),
+        usage: z.object({
+          inputTokens: z.number().optional(),
+          outputTokens: z.number().optional(),
+          totalTokens: z.number().optional(),
+          reasoningTokens: z.number().optional(),
+          cache: z
+            .object({
+              readTokens: z.number().optional(),
+              writeTokens: z.number().optional(),
+            })
+            .optional(),
+        }),
+        finishReason: z.string().nullable(),
       }),
-      finishReason: z.string().nullable(),
     }),
   )
 
@@ -61,6 +72,7 @@ export namespace LLM {
     small?: boolean
     tools: Record<string, Tool>
     retries?: number
+    messageOrigin?: "response" | "generate_title" | "summarize_session" | "summarize_message"
   }
 
   export type StreamOutput = StreamTextResult<ToolSet, unknown>
@@ -182,6 +194,7 @@ export namespace LLM {
       })
     }
 
+    const streamStartTime = Date.now()
     return streamText({
       onError(error) {
         l.error("stream error", {
@@ -273,17 +286,23 @@ export namespace LLM {
       }),
       experimental_telemetry: { isEnabled: cfg.experimental?.openTelemetry },
       onFinish: async (event) => {
+        const streamEndtime = Date.now()
+        const end = Date.now()
+        const log = Log.create({ service: "session.context" })
+        const id = `${input.user.id}-${input.agent.name}-s${streamStartTime}-e${end}`
+        log.info(id)
         Bus.publish(MessageExchangeAfterEvent, {
           sessionID: input.sessionID,
           messageID: input.user.id,
-          usage: event.usage,
+          messageOrigin: input.messageOrigin ?? "response",
           request: {
             body: (event.request?.body as Record<string, any> | null) ?? null,
           },
           response: {
             body: (event.response?.body as Record<string, any> | null) ?? null,
+            usage: event.usage,
+            finishReason: event.finishReason ?? null,
           },
-          finishReason: event.finishReason ?? null,
         })
       },
     })
