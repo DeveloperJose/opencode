@@ -8,7 +8,7 @@ import { useToast } from "./toast"
 
 export function Dialog(
   props: ParentProps<{
-    size?: "medium" | "large"
+    size?: "medium" | "large" | "x-large"
     onClose: () => void
   }>,
 ) {
@@ -26,7 +26,10 @@ export function Dialog(
       height={dimensions().height}
       alignItems="center"
       position="absolute"
-      paddingTop={dimensions().height / 4}
+      paddingTop={props.size === "x-large" ? dimensions().height * 0.05 : dimensions().height / 4}
+      paddingBottom={props.size === "x-large" ? dimensions().height * 0.05 : dimensions().height / 4}
+      paddingLeft={props.size === "x-large" ? dimensions().width * 0.05 : 0}
+      paddingRight={props.size === "x-large" ? dimensions().width * 0.05 : 0}
       left={0}
       top={0}
       backgroundColor={RGBA.fromInts(0, 0, 0, 150)}
@@ -36,10 +39,13 @@ export function Dialog(
           if (renderer.getSelection()) return
           e.stopPropagation()
         }}
-        width={props.size === "large" ? 80 : 60}
+        width={props.size === "x-large" ? "100%" : props.size === "large" ? 80 : 60}
+        height="100%"
         maxWidth={dimensions().width - 2}
+        maxHeight={dimensions().height - 2}
         backgroundColor={theme.backgroundPanel}
         paddingTop={1}
+        paddingBottom={1}
       >
         {props.children}
       </box>
@@ -53,7 +59,7 @@ function init() {
       element: JSX.Element
       onClose?: () => void
     }[],
-    size: "medium" as "medium" | "large",
+    size: "medium" as "medium" | "large" | "x-large",
   })
 
   useKeyboard((evt) => {
@@ -119,7 +125,7 @@ function init() {
     get size() {
       return store.size
     },
-    setSize(size: "medium" | "large") {
+    setSize(size: "medium" | "large" | "x-large") {
       setStore("size", size)
     },
   }
