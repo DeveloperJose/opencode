@@ -523,10 +523,11 @@ export type EventPermissionReplied = {
 export type EventMessageExchangeAfter = {
   type: "message.exchange.after"
   properties: {
-    sessionID: string
-    messageID: string
-    messageOrigin: "response" | "generate_title" | "summarize_session" | "summarize_message"
+    id: string
     request: {
+      sessionID: string
+      messageID: string
+      messageOrigin: "response" | "generate_title" | "summarize_message"
       body: {
         [key: string]: unknown
       } | null

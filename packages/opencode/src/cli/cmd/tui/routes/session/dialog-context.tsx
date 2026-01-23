@@ -1,221 +1,189 @@
 import { Show, For, createSignal, createMemo } from "solid-js"
 import { useKeyboard } from "@opentui/solid"
-import { RGBA, TextAttributes } from "@opentui/core"
+import { TextAttributes } from "@opentui/core"
 import { useDialog } from "@tui/ui/dialog"
 import { useSync } from "@tui/context/sync"
 import { useTheme } from "@tui/context/theme"
 import { useToast } from "../../ui/toast"
-import { onMount, type JSX } from "solid-js"
 import { Clipboard } from "../../util/clipboard"
-import { Log } from "@/util/log"
+import type { EventMessageExchangeAfter } from "@opencode-ai/sdk/v2"
 
 const TABS = [
   { name: "Overview", key: "overview" },
   { name: "Response", key: "response" },
   { name: "Titles", key: "generate_title" },
-  { name: "Summaries", key: "summarize_message" },
 ]
 
-function formatNumber(n: number): string {
+function fmt(n: number): string {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + "M"
   if (n >= 1000) return (n / 1000).toFixed(1) + "k"
   return n.toString()
 }
 
-function estimateTokensFromObject(obj: any): number {
+function tokens(obj: unknown): number {
   if (!obj) return 0
   if (typeof obj === "string") return Math.ceil(obj.length / 4)
-  if (Array.isArray(obj)) return obj.reduce((sum, item) => sum + estimateTokensFromObject(item), 0)
+  if (Array.isArray(obj)) return obj.reduce((sum, item) => sum + tokens(item), 0)
   if (typeof obj === "object") {
-    return Object.entries(obj).reduce((sum, [key, value]) => {
-      return sum + estimateTokensFromObject(key) + estimateTokensFromObject(value)
-    }, 0)
+    return Object.entries(obj).reduce((sum, [k, v]) => sum + tokens(k) + tokens(v), 0)
   }
   return 0
 }
 
-function extractKeys(obj: any, prefix = ""): string[] {
-  if (obj === null || obj === undefined) return []
-  if (typeof obj !== "object") return []
-  if (Array.isArray(obj)) {
-    return obj.flatMap((item, i) => extractKeys(item, `${prefix}[${i}]`))
+type SeqItem = { idx: number; label: string; val: unknown; color: string; tk: number }
+
+function seq(body: Record<string, unknown>): SeqItem[] {
+  const s: SeqItem[] = []
+  let i = 0
+  const roles: Record<string, string> = {
+    SYSTEM: "error",
+    DEVELOPER: "error",
+    USER: "success",
+    ASSISTANT: "accent",
   }
-  return Object.entries(obj).flatMap(([key, value]) => {
-    const path = prefix ? `${prefix}.${key}` : key
-    return [path, ...extractKeys(value, path)]
-  })
-}
 
-function generateTuiSequence(requestBody: Record<string, any>) {
-  const sequence: { index: number; label: string; value: any; color: string; tokens: number }[] = []
-  let idx = 0
-
-  Object.entries(requestBody).forEach(([key, value]) => {
-    key = key.toLowerCase().trim()
+  Object.entries(body).forEach(([k, v]) => {
+    const key = k.toLowerCase().trim()
     switch (key) {
       case "system":
-        sequence.push({ index: ++idx, label: "SYSTEM", value, tokens: estimateTokensFromObject(value), color: "error" })
+        s.push({ idx: ++i, label: "SYSTEM", val: v, tk: tokens(v), color: "error" })
         break
       case "messages":
       case "input":
-        if (Array.isArray(value)) {
-          value.forEach((msg, _) => {
+        if (Array.isArray(v)) {
+          v.forEach((msg) => {
             const role = msg.role?.toUpperCase() || "UNKNOWN"
-            const roleColor =
-              role === "SYSTEM" || role === "DEVELOPER" ? "error" :
-                role === "USER" ? "success" :
-                  role === "ASSISTANT" ? "accent" : "textMuted"
+            const color = roles[role] ?? "textMuted"
 
             if (role === "ASSISTANT" && Array.isArray(msg.tool_calls)) {
-              msg.tool_calls.forEach((tc: any) => {
-                const fnName = tc.function?.name || tc.name || "?"
-                sequence.push({ index: ++idx, label: `TOOL CALL - ${fnName}`, value: tc, tokens: estimateTokensFromObject(tc), color: "error" })
+              msg.tool_calls.forEach((tc: { function?: { name?: string }; name?: string }) => {
+                const fn = tc.function?.name || tc.name || "?"
+                s.push({ idx: ++i, label: `TOOL CALL - ${fn}`, val: tc, tk: tokens(tc), color: "error" })
               })
             } else if (msg.tool_call_id) {
-              sequence.push({ index: ++idx, label: `TOOL RESULT`, value: msg, tokens: estimateTokensFromObject(msg), color: "info" })
+              s.push({ idx: ++i, label: `TOOL RESULT`, val: msg, tk: tokens(msg), color: "info" })
             } else {
-              sequence.push({ index: ++idx, label: role, value: msg, tokens: estimateTokensFromObject(msg), color: roleColor })
+              s.push({ idx: ++i, label: role, val: msg, tk: tokens(msg), color: color })
             }
           })
         }
         break
       case "tools":
-        if (Array.isArray(value)) {
-          value.forEach((tool) => {
-            const toolName = tool.function?.name || tool.name || "?"
-            sequence.push({ index: ++idx, label: `TOOL DEF: ${toolName}`, value: tool, tokens: estimateTokensFromObject(tool), color: "error" })
+        if (Array.isArray(v)) {
+          v.forEach((tool) => {
+            const name = tool.function?.name || tool.name || "?"
+            s.push({ idx: ++i, label: `TOOL DEF: ${name}`, val: tool, tk: tokens(tool), color: "error" })
           })
         }
         break
       default:
-        sequence.push({ index: ++idx, label: key.toUpperCase(), value, tokens: 0, color: "textMuted" })
+        s.push({ idx: ++i, label: key.toUpperCase(), val: v, tk: 0, color: "textMuted" })
         break
     }
   })
-  return sequence
+  return s
 }
 
 export function DialogContext(props: { sessionID: string }) {
   const dialog = useDialog()
   const sync = useSync()
-  const { theme, syntax } = useTheme()
-  const toast = useToast()
+  const ui = useTheme()
+  const t = useToast()
   dialog.setSize("x-large")
 
-  const [activeTab, setActiveTab] = createSignal(0)
-  const [activeExchange, setActiveExchange] = createSignal(0)
-  const [currentPartIndex, setCurrentPartIndex] = createSignal(0)
+  const [tab, setTab] = createSignal(0)
+  const [idx, setIdx] = createSignal(0)
+  const [p, setP] = createSignal(0)
 
-  const activeOrigin = createMemo(() => {
-    const tab = activeTab()
-    if (tab === 0) return null
-    const origins = ["response", "generate_title", "summarize_message"]
-    return tab <= origins.length ? origins[tab - 1] : null
+  const origin = createMemo(() => {
+    if (tab() === 0) return null
+    const origins = ["response", "generate_title"]
+    return tab() <= origins.length ? origins[tab() - 1] : null
   })
 
-  const filteredExchanges = createMemo(() => {
+  const exchanges = createMemo(() => {
     const all = sync.data.session_context[props.sessionID] ?? []
-    const origin = activeOrigin()
-    if (!origin) return all
-    return all.filter((e) => e.messageOrigin === origin)
+    const o = origin()
+    return o ? all.filter((e) => e.properties.request.messageOrigin === o) : all
   })
 
-  const hasExchanges = createMemo(() => (sync.data.session_context[props.sessionID]?.length ?? 0) > 0)
+  const has = createMemo(() => (sync.data.session_context[props.sessionID]?.length ?? 0) > 0)
 
-  const currentExchange = createMemo(() => {
-    const idx = activeExchange()
-    const exchanges = filteredExchanges()
-    return exchanges[idx] ?? null
+  const curr = createMemo(() => exchanges()[idx()] ?? null)
+
+  const s = createMemo(() => {
+    const c = curr()
+    const body = c?.properties.request.body
+    return body ? seq(body) : []
   })
 
-  const currentSequence = createMemo(() => {
-    const exchange = currentExchange()
-    if (!exchange) return []
-    const seq = generateTuiSequence(exchange.request.body || {})
-    return seq
-  })
+  const item = createMemo(() => s()[p()] ?? null)
 
-  const currentPart = createMemo(() => {
-    const seq = currentSequence()
-    const idx = currentPartIndex()
-    return seq[idx] || null
-  })
+  const recent = createMemo(() => [...exchanges()].reverse().slice(0, 10))
 
-  const recentExchanges = createMemo(() => {
-    const all = filteredExchanges()
-    return [...all].reverse().slice(0, 10)
-  })
-
-  const overviewStats = createMemo(() => {
+  const stats = createMemo(() => {
     const all = sync.data.session_context[props.sessionID] ?? []
-    const origin = activeOrigin()
-    const filtered = origin ? all.filter((e) => e.messageOrigin === origin) : all
-    const total = filtered.length
-    const totalInput = filtered.reduce((sum, e) => sum + (e.response?.usage?.inputTokens || 0), 0)
-    const totalOutput = filtered.reduce((sum, e) => sum + (e.response?.usage?.outputTokens || 0), 0)
-    const totalEstimatedInput = filtered.reduce((sum, e) => sum + estimateTokensFromObject(e.request.body), 0)
-    const totalEstimatedOutput = filtered.reduce((sum, e) => sum + estimateTokensFromObject(e.response?.body), 0)
-    return { total, totalInput, totalOutput, totalEstimatedInput, totalEstimatedOutput, origin }
+    const o = origin()
+    const list = o ? all.filter((e) => e.properties.request.messageOrigin === o) : all
+    return {
+      total: list.length,
+      in: list.reduce((sum, e) => sum + (e.properties.response?.usage?.inputTokens || 0), 0),
+      out: list.reduce((sum, e) => sum + (e.properties.response?.usage?.outputTokens || 0), 0),
+      ein: list.reduce((sum, e) => sum + tokens(e.properties.request.body), 0),
+      eout: list.reduce((sum, e) => sum + tokens(e.properties.response?.body), 0),
+    }
   })
 
   useKeyboard((evt) => {
-    if (activeTab() !== 0) {
-      const exchanges = filteredExchanges()
-      if (exchanges.length === 0) return
+    if (tab() === 0) return
+    const list = exchanges()
+    if (list.length === 0) return
 
-      if (evt.name === "up") {
-        evt.preventDefault()
-        evt.stopPropagation()
-        const seq = currentSequence()
-        const next = Math.max(0, currentPartIndex() - 1)
-        setCurrentPartIndex(next)
-        return
-      }
-      if (evt.name === "down") {
-        evt.preventDefault()
-        evt.stopPropagation()
-        const seq = currentSequence()
-        const next = Math.min(seq.length - 1, currentPartIndex() + 1)
-        setCurrentPartIndex(next)
-        return
-      }
-      if (evt.name === "-" || evt.name === "_") {
-        evt.preventDefault()
-        evt.stopPropagation()
-        const next = Math.max(0, activeExchange() - 1)
-        setActiveExchange(next)
-        setCurrentPartIndex(0)
-        return
-      }
-      if (evt.name === "=" || evt.name === "+") {
-        evt.preventDefault()
-        evt.stopPropagation()
-        const next = Math.min(exchanges.length - 1, activeExchange() + 1)
-        setActiveExchange(next)
-        setCurrentPartIndex(0)
-        return
-      }
+    if (evt.name === "up") {
+      evt.preventDefault()
+      evt.stopPropagation()
+      setP(Math.max(0, p() - 1))
+      return
+    }
+    if (evt.name === "down") {
+      evt.preventDefault()
+      evt.stopPropagation()
+      setP(Math.min(s().length - 1, p() + 1))
+      return
+    }
+    if (evt.name === "-" || evt.name === "_") {
+      evt.preventDefault()
+      evt.stopPropagation()
+      setIdx(Math.max(0, idx() - 1))
+      setP(0)
+      return
+    }
+    if (evt.name === "=" || evt.name === "+") {
+      evt.preventDefault()
+      evt.stopPropagation()
+      setIdx(Math.min(list.length - 1, idx() + 1))
+      setP(0)
+      return
     }
   })
 
-  const formattedContent = createMemo(() => {
-    const part = currentPart()
-    if (!part) return ""
-    return JSON.stringify(part.value, null, 2)
-  })
+  const json = createMemo(() => (item() ? JSON.stringify(item()!.val, null, 2) : ""))
 
-  const handleTextSelection = () => {
-    const contentToCopy = formattedContent()
-    if (contentToCopy.trim()) {
-      Clipboard.copy(contentToCopy)
-        .then(() => toast.show({ message: "Copied to clipboard", variant: "info" }))
-        .catch(() => toast.error("Failed to copy text"))
+  const copy = () => {
+    const data = json()
+    if (data.trim()) {
+      Clipboard.copy(data)
+        .then(() => t.show({ message: "Copied to clipboard", variant: "info" }))
+        .catch(() => t.error("Failed to copy text"))
     }
   }
 
+  const theme = ui.theme
+  const syntax = ui.syntax
+
   return (
     <box
-      onMouseUp={(e) => { e.stopPropagation(); handleTextSelection() }}
+      onMouseUp={(e) => { e.stopPropagation(); copy() }}
       backgroundColor={theme.backgroundPanel}
       padding={1}
       flexDirection="column"
@@ -228,19 +196,15 @@ export function DialogContext(props: { sessionID: string }) {
       <box flexShrink={0} paddingTop={1}>
         <tab_select
           height={2}
-          options={TABS.map((tab, index) => ({ name: tab.name, value: index, description: "" }))}
-          onChange={(index: number) => {
-            setActiveTab(index)
-            setCurrentPartIndex(0)
-            setActiveExchange(0)
-          }}
+          options={TABS.map((t, i) => ({ name: t.name, value: i, description: "" }))}
+          onChange={(v: number) => { setTab(v); setP(0); setIdx(0) }}
           focused
         />
       </box>
 
       <box flexDirection="column" flexGrow={1} overflow="hidden" paddingTop={1}>
         <Show
-          when={hasExchanges()}
+          when={has()}
           fallback={
             <box flexDirection="column" alignItems="center" justifyContent="center" flexGrow={1}>
               <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
@@ -251,7 +215,7 @@ export function DialogContext(props: { sessionID: string }) {
             </box>
           }
         >
-          <Show when={activeTab() === 0}>
+          <Show when={tab() === 0}>
             <box flexDirection="column" flexGrow={1} overflow="hidden">
               <scrollbox flexGrow={1} overflow="hidden">
                 <box flexDirection="column" paddingBottom={1}>
@@ -259,36 +223,36 @@ export function DialogContext(props: { sessionID: string }) {
                   <box paddingTop={1} flexDirection="row" gap={4}>
                     <box flexDirection="column">
                       <text fg={theme.textMuted}>Total Exchanges</text>
-                      <text fg={theme.text} attributes={TextAttributes.BOLD}>{overviewStats().total}</text>
+                      <text fg={theme.text} attributes={TextAttributes.BOLD}>{stats().total}</text>
                     </box>
                     <box flexDirection="column">
                       <text fg={theme.textMuted}>Actual Input Tokens</text>
-                      <text fg={theme.text} attributes={TextAttributes.BOLD}>{formatNumber(overviewStats().totalInput)}</text>
+                      <text fg={theme.text} attributes={TextAttributes.BOLD}>{fmt(stats().in)}</text>
                     </box>
                     <box flexDirection="column">
                       <text fg={theme.textMuted}>Actual Output Tokens</text>
-                      <text fg={theme.text} attributes={TextAttributes.BOLD}>{formatNumber(overviewStats().totalOutput)}</text>
+                      <text fg={theme.text} attributes={TextAttributes.BOLD}>{fmt(stats().out)}</text>
                     </box>
                     <box flexDirection="column">
                       <text fg={theme.textMuted}>Estimated Input Tokens</text>
-                      <text fg={theme.text} attributes={TextAttributes.BOLD}>{formatNumber(overviewStats().totalEstimatedInput)}</text>
+                      <text fg={theme.text} attributes={TextAttributes.BOLD}>{fmt(stats().ein)}</text>
                     </box>
                     <box flexDirection="column">
                       <text fg={theme.textMuted}>Estimated Output Tokens</text>
-                      <text fg={theme.text} attributes={TextAttributes.BOLD}>{formatNumber(overviewStats().totalEstimatedOutput)}</text>
+                      <text fg={theme.text} attributes={TextAttributes.BOLD}>{fmt(stats().eout)}</text>
                     </box>
                   </box>
                 </box>
 
                 <box paddingTop={2} flexDirection="column">
                   <text attributes={TextAttributes.BOLD} fg={theme.accent}>Recent Exchanges</text>
-                  <For each={recentExchanges()}>
-                    {(exchange) => (
+                  <For each={recent()}>
+                    {(ex) => (
                       <box flexDirection="column" paddingTop={1} border={["bottom"]} borderColor={theme.borderSubtle}>
-                        <text fg={theme.textMuted}>{exchange.request.body?.model ?? "Unknown"}</text>
+                        <text fg={theme.textMuted}>{ex.properties.request.body?.model ?? "Unknown"}</text>
                         <text fg={theme.textMuted}>
-                          {formatNumber(exchange.response?.usage?.inputTokens || 0)} →{" "}
-                          {formatNumber(exchange.response?.usage?.outputTokens || 0)} tokens
+                          {fmt(ex.properties.response?.usage?.inputTokens || 0)} →{" "}
+                          {fmt(ex.properties.response?.usage?.outputTokens || 0)} tokens
                         </text>
                       </box>
                     )}
@@ -298,7 +262,7 @@ export function DialogContext(props: { sessionID: string }) {
             </box>
           </Show>
 
-          <Show when={activeTab() !== 0}>
+          <Show when={tab() !== 0}>
             <box flexDirection="row" gap={1} flexGrow={1} overflow="hidden">
               <box width="30%" flexDirection="column" flexGrow={1} overflow="hidden">
                 <box flexShrink={0} flexDirection="column">
@@ -309,47 +273,45 @@ export function DialogContext(props: { sessionID: string }) {
 
                   <box border={["bottom"]} borderColor={theme.borderSubtle} />
                   <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>Response:</text>
-                  <Show when={currentExchange()?.response?.usage}>
+                  <Show when={curr()?.properties.response?.usage}>
                     <text fg={theme.textMuted}>
-                      {formatNumber(currentExchange()?.response?.usage?.inputTokens || 0)} input tokens
+                      {fmt(curr()!.properties.response!.usage!.inputTokens || 0)} input tokens
                     </text>
                   </Show>
-                  <Show when={currentExchange()?.response?.finishReason}>
-                    <text fg={theme.textMuted}>Finish Reason: "{currentExchange()?.response?.finishReason}"</text>
+                  <Show when={curr()?.properties.response?.finishReason}>
+                    <text fg={theme.textMuted}>Finish Reason: "{curr()!.properties.response!.finishReason}"</text>
                   </Show>
                   <box border={["bottom"]} borderColor={theme.borderSubtle} />
 
-
-                  <Show when={currentExchange()}>
+                  <Show when={curr()}>
                     <text fg={theme.text}>
-                      Exchange #{activeExchange() + 1} / {filteredExchanges().length}
+                      Exchange #{idx() + 1} / {exchanges().length}
                     </text>
                   </Show>
                 </box>
 
                 <scrollbox flexGrow={1} overflow="hidden">
-                  <For each={currentSequence()}>
-                    {(item, i) => {
-                      const isSelected = () => i() === currentPartIndex()
-                      const total = currentSequence().length
-                      const colorValue = (theme as unknown as Record<string, RGBA | string | undefined>)[item.color] ?? theme.text
-                      const borderColor = isSelected() ? (colorValue as RGBA | string) : theme.borderSubtle
+                  <For each={s()}>
+                    {(it, i) => {
+                      const sel = () => i() === p()
+                      const tot = s().length
+                      const color = (theme as Record<string, unknown>)[it.color] as string ?? theme.text
+                      const b = sel() ? color : theme.borderSubtle
                       return (
                         <box flexDirection="column" paddingBottom={0}>
-                          {isSelected() && <box border={["bottom"]} borderColor={borderColor as RGBA | string | undefined} />}
+                          {sel() && <box border={["bottom"]} borderColor={b} />}
                           <text
-                            fg={colorValue as RGBA | string | undefined}
-                            attributes={isSelected() ? TextAttributes.BOLD : undefined}
+                            fg={color}
+                            attributes={sel() ? TextAttributes.BOLD : undefined}
                           >
-                            {isSelected() ? "▶ " : ""}[{i() + 1}/{total}] {item.label} ({formatNumber(item.tokens || 0)})
+                            {sel() ? "▶ " : ""}[{i() + 1}/{tot}] {it.label} ({fmt(it.tk || 0)})
                           </text>
-                          {isSelected() && <box border={["bottom"]} borderColor={borderColor as RGBA | string | undefined} />}
+                          {sel() && <box border={["bottom"]} borderColor={b} />}
                         </box>
                       )
                     }}
                   </For>
                 </scrollbox>
-
               </box>
 
               <box border={["left"]} borderColor={theme.borderSubtle} />
@@ -361,7 +323,7 @@ export function DialogContext(props: { sessionID: string }) {
                     drawUnstyledText={false}
                     streaming={true}
                     syntaxStyle={syntax()}
-                    content={formattedContent()}
+                    content={json()}
                     fg={theme.text}
                   />
                 </scrollbox>

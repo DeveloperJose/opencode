@@ -1,4 +1,4 @@
-import os from "os"
+import { Identifier } from "@opencode-ai/util/identifier"
 import { Installation } from "@/installation"
 import { Provider } from "@/provider/provider"
 import { Log } from "@/util/log"
@@ -31,13 +31,18 @@ import { Auth } from "@/auth"
 export namespace LLM {
   const log = Log.create({ service: "llm" })
 
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+  }
+
   export const MessageExchangeAfterEvent = BusEvent.define(
     "message.exchange.after",
     z.object({
-      sessionID: z.string(),
-      messageID: z.string(),
-      messageOrigin: z.enum(["response", "generate_title", "summarize_session", "summarize_message"]),
+      id: z.string(),
       request: z.object({
+        sessionID: z.string(),
+        messageID: z.string(),
+        messageOrigin: z.enum(["response", "generate_title", "summarize_message"]),
         body: z.record(z.string(), z.any()).nullable(),
       }),
       response: z.object({
@@ -72,7 +77,7 @@ export namespace LLM {
     small?: boolean
     tools: Record<string, Tool>
     retries?: number
-    messageOrigin?: "response" | "generate_title" | "summarize_session" | "summarize_message"
+    messageOrigin?: "response" | "generate_title" | "summarize_message"
   }
 
   export type StreamOutput = StreamTextResult<ToolSet, unknown>
@@ -295,20 +300,17 @@ export namespace LLM {
       }),
       experimental_telemetry: { isEnabled: cfg.experimental?.openTelemetry },
       onFinish: async (event) => {
-        const streamEndtime = Date.now()
-        const end = Date.now()
-        const log = Log.create({ service: "session.context" })
-        const id = `${input.user.id}-${input.agent.name}-s${streamStartTime}-e${end}`
-        log.info(id)
+        const id = Identifier.ascending()
         Bus.publish(MessageExchangeAfterEvent, {
-          sessionID: input.sessionID,
-          messageID: input.user.id,
-          messageOrigin: input.messageOrigin ?? "response",
+          id,
           request: {
-            body: (event.request?.body as Record<string, any> | null) ?? null,
+            sessionID: input.sessionID,
+            messageID: input.user.id,
+            messageOrigin: input.messageOrigin ?? "response",
+            body: isRecord(event.request?.body) ? event.request.body : null,
           },
           response: {
-            body: (event.response?.body as Record<string, any> | null) ?? null,
+            body: isRecord(event.response?.body) ? event.response.body : null,
             usage: event.usage,
             finishReason: event.finishReason ?? null,
           },
